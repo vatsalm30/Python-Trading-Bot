@@ -61,7 +61,7 @@ def strategy(close_data, buy_price, last_candle, exchange):
 
             return last_candle[4]
 
-        elif (closeCondition1 or closeCondition2 or closeCondition3) and openPosition and last_candle[4]*1.0015 > buy_price:
+        elif (closeCondition1 or closeCondition2 or closeCondition3) and openPosition and last_candle[4] > buy_price*1.0015:
             wrapper.sell_coin(leverage)
 
             print("Sell!")
