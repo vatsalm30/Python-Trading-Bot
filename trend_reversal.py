@@ -32,7 +32,7 @@ def strategy(close_data, buy_price, last_candle, exchange):
 
         closeCondition1 = (lastFastSMA - lastSlowSMA) / lastSlowSMA <= -.01 and not buyCondition
         closeCondition2 = lastRSI > 80 and not buyCondition
-        closeCondition3 = macdLine > signalLine and macdLine > 0 and signalLine > 0 and lastRSI > 65
+        closeCondition3 = macdLine < signalLine and macdLine > 0 and signalLine > 0 and lastRSI > 65
 
 
         # print('Last candle', last_candle, exchange.iso8601(last_candle[0]))
