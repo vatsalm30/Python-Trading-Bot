@@ -9,7 +9,7 @@ root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)
 sys.path.append(root + '/python')
 
 class Wrapper:
-    def __init__(self, apiKey: str = None, secret: str = None):
+    def __init__(self, apiKey: str = None, secret: str = None, symbol: str = "ETH/USD:USD"):
         self.phemex = ccxt.phemex({
             "enableRateLimit": True,
             "apiKey": apiKey,
@@ -22,37 +22,39 @@ class Wrapper:
             "XRP/USDT:USDT": 1
             }
 
-    def buy_coin(self, _leverage: int, symbol: str, amount_to_buy_percent: int = 100) -> str:
-        moneyInAccount = self.phemex.fetch_balance({"type": "swap", "code": f"USD{'T' if symbol[-1] == 'T' else ''}"})[f"USD{'T' if symbol[-1] == 'T' else ''}"]["total"]
-        moneyToSpend = moneyInAccount * amount_to_buy_percent / 100
-        amountToBuy = (moneyToSpend / self.phemex.fetch_ticker(symbol)["bid"]) * _leverage
+        self.symbol = symbol
 
-        amountToPay = amountToBuy / self.amountConversion[symbol]
+    def buy_coin(self, _leverage: int, amount_to_buy_percent: int = 100) -> str:
+        moneyInAccount = self.phemex.fetch_balance({"type": "swap", "code": f"USD{'T' if self.symbol[-1] == 'T' else ''}"})[f"USD{'T' if self.symbol[-1] == 'T' else ''}"]["total"]
+        moneyToSpend = moneyInAccount * amount_to_buy_percent / 100
+        amountToBuy = (moneyToSpend / self.phemex.fetch_ticker(self.symbol)["bid"]) * _leverage
+
+        amountToPay = amountToBuy / self.amountConversion[self.symbol]
 
         if amountToPay < 1:
             return "Not Enough Funds"
 
-        if symbol[-1] == "T":
-            self.phemex.set_position_mode(False, symbol)
+        if self.symbol[-1] == "T":
+            self.phemex.set_position_mode(False, self.symbol)
 
-        leverageResponse = self.phemex.set_leverage(_leverage, symbol)
+        leverageResponse = self.phemex.set_leverage(_leverage, self.symbol)
 
-        order = self.phemex.create_market_buy_order(symbol, amountToPay)
+        order = self.phemex.create_market_buy_order(self.symbol, amountToPay)
 
         return order
 
-    def sell_coin(self, _leverage: int, symbol: str, amount_to_sell_percent: int = 100) -> str:
-        amountToGet = int(self.phemex.fetch_positions([symbol])[0]["info"]["size"]) * amount_to_sell_percent / 100
+    def sell_coin(self, _leverage: int,  amount_to_sell_percent: int = 100) -> str:
+        amountToGet = int(self.phemex.fetch_positions([self.symbol])[0]["info"]["size"]) * amount_to_sell_percent / 100
 
         if amountToGet < 1:
             return "Not Enough Funds"
 
-        if symbol[-1] == "T":
-            self.phemex.set_position_mode(False, symbol)
+        if self.symbol[-1] == "T":
+            self.phemex.set_position_mode(False, self.symbol)
 
-        self.phemex.set_leverage(_leverage, symbol)
+        self.phemex.set_leverage(_leverage, self.symbol)
 
-        order = self.phemex.create_market_sell_order(symbol, amountToGet)
+        order = self.phemex.create_market_sell_order(self.symbol, amountToGet)
 
         return order
 
@@ -118,11 +120,53 @@ class Wrapper:
         macd_line = fast_ema - slow_ema
         signal_len = self.calc_ema(macd_line.tolist(), signal_len)
 
-        return macd_line, signal_len
+        return macd_line.tolist()[-1], signal_len[-1]
     
-    def bot_loop(self, ):
+    def bot_loop(self, strategy, timeframe: int = "5m"):
+        limit = 300
+        hold = 30
+        timeframe = timeframe
+
+        exchange = ccxt.cryptocom()
+        interval = exchange.parse_timeframe(timeframe) * 1000
+
+        pastData = exchange.fetch_ohlcv(self.symbol.split(":")[0], timeframe,
+                                        since=exchange.round_timeframe(timeframe, exchange.milliseconds(), ROUND_UP) - (
+                                                limit * interval), limit=limit)
+        closeData = [pastData[x][4] for x, a in enumerate(pastData)]
+
+        lastTime = pastData[-1][0]
+
+        buyPrice = -1
+
         while True:
             try:
-                pass
-            except:
-                pass
+                print(exchange.milliseconds(), 'Fetching candles')
+                since = exchange.round_timeframe(timeframe, exchange.milliseconds(), ROUND_UP) - (limit * interval)
+                ohlcv = exchange.fetch_ohlcv('ETH/USD', timeframe, since=since, limit=limit)
+
+                lastCandle = ohlcv[-1]
+                last = lastCandle[0]
+                if lastTime == lastCandle[0]:
+                    print('Last candle', lastCandle, exchange.iso8601(last))
+                    time.sleep(hold)
+                    continue
+
+                closeData.pop(0)
+                closeData.append(lastCandle[4])
+
+                buyPrice = strategy(closeData, buyPrice, lastCandle, exchange)
+                
+                # Calculate time to next candle and sleep for that many seconds
+                sleeptime = (exchange.round_timeframe(timeframe, last, ROUND_UP) - exchange.milliseconds()) / 1000
+
+                if sleeptime >= 0:
+                    time.sleep(sleeptime)
+                else:
+                    sleeptime = (exchange.round_timeframe(timeframe, last, ROUND_UP) - exchange.milliseconds()) / 1000 * -1
+                    time.sleep(10)
+
+            except (ccxt.ExchangeError, ccxt.AuthenticationError, ccxt.ExchangeNotAvailable, ccxt.RequestTimeout,
+                ccxt.NetworkError) as error:
+                print('Got an error', type(error).__name__, error.args, ', retrying in', hold, 'seconds...')
+                time.sleep(hold)
