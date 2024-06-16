@@ -1,1 +1,1 @@
-# BTCIndicatorTradeBot
+# Python Trading Bot
